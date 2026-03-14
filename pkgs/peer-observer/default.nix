@@ -1,4 +1,10 @@
-{ stdenv, pkgs, rustPlatform, ... }:
+{ stdenv
+, lib
+, pkgs
+, rustPlatform
+, enableTracing ? stdenv.hostPlatform.isLinux && !stdenv.hostPlatform.isStatic
+, ...
+}:
 
 rustPlatform.buildRustPackage rec {
   name = "peer-observer";
@@ -17,22 +23,23 @@ rustPlatform.buildRustPackage rec {
     "fortify"
   ];
 
-  buildInputs = [
-    # for building libbpf
-    pkgs.elfutils
-    pkgs.zlib
+  buildInputs = with pkgs; [
+    zlib
+  ] ++ lib.optionals enableTracing [
+    elfutils
   ];
 
-  nativeBuildInputs = [
-    pkgs.protobuf
-    pkgs.cmake
+  nativeBuildInputs = with pkgs; [
+    protobuf
+    cmake
+  ] ++ lib.optionals enableTracing [
+    llvmPackages_20.clang-unwrapped
+    pkg-config
+    rustfmt
+  ];
 
-    # for building libbpf
-    pkgs.llvmPackages_20.clang-unwrapped
-    pkgs.pkg-config
-
-    # needed for libbpf-cargo
-    pkgs.rustfmt
+  cargoBuildFlags = lib.optionals (!enableTracing) [
+      "--workspace --exclude ebpf-extractor"
   ];
 
   # during the integration tests, don't try to download a bitcoind binary
@@ -43,16 +50,17 @@ rustPlatform.buildRustPackage rec {
   # to run the integration tests.
   checkPhase = ''
     export NATS_SERVER_BINARY="${pkgs.nats-server}/bin/nats-server"
-    cargo test --all-features
+    cargo test --all-features ${lib.strings.join " " cargoBuildFlags}
   '';
 
   # set the path of the Linux kernel headers. These are needed in
   # build.rs of the ebpf-extractor on Nix.
-  KERNEL_HEADERS = "${pkgs.linuxHeaders}/include";
+  KERNEL_HEADERS = lib.derivations.optionalDrvAttr enableTracing 
+    "${pkgs.linuxHeaders}/include";
 
   cargoHash = "sha256-CNbNliqp4BwbdySoD+BFfq9QsIYDiaKRZdD/oBgwyvo=";
 
-  meta = with stdenv.lib; {
+  meta = {
     description = "Hooks into Bitcoin Core to observe how our peers interact with us.";
   };
 
